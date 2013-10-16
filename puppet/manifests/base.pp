@@ -17,14 +17,29 @@ class ubuntu_packages {
   package { 'python2.7-dev': }
   package { 'python2.7-mysqldb': }
   package { 'python2.7-imaging': }
+  package { 'python2.7-scipy': }
   package { 'git': }
   package { 'libevent-dev': }
 
   package { 'python-setuptools': }
   package { 'python-pip': }
 
-  # handy for dev
+  # optional - for dev
   package { 'emacs23': }
+
+  # optional - includes useful 'reindent.py' script for dev
+  package { 'python-examples': }
+
+  # optional - provides useful 'ack' command for dev
+  package { 'ack-grep': }
+  file { '/usr/bin/ack':
+    ensure => link,
+    target => '/usr/bin/ack-grep',
+    require => Package['ack-grep'],
+  }
+
+  # optional - needed for pykml
+  package { 'python-lxml': }
 }
 
 class { 'ubuntu_packages': }
@@ -87,6 +102,38 @@ class pip_packages {
   package { 'ipython':
     provider => 'pip',
   }
+  package { 'tornado':
+    provider => 'pip',
+  }
+
+  # optional - handy for debugging
+  package { 'django-debug-toolbar':
+    provider => 'pip',
+  }
+
+  # optional - needed for manage.py lint
+  package { 'pylint':
+    provider => 'pip',
+  }
+  package { 'pep8':
+    provider => 'pip',
+  }
+  package { 'closure-linter':
+    source => 'http://closure-linter.googlecode.com/files/closure_linter-latest.tar.gz',
+    provider => 'pip',
+  }
+
+  # optional - for kml validation during testing
+  package { 'pykml':
+    provider => 'pip',
+    require => Package['python-lxml'],
+  }
+
+  # optional - improves manage.py test
+  package { 'django-discover-runner':
+    provider => 'pip',
+  }
+
 }
 
 class { 'pip_packages': }
@@ -110,7 +157,6 @@ class mysql_setup {
   }
   # install python bindings
   class { 'mysql::bindings::python': }
-  # create database
   anchor { 'mysql_setup::end':
     require => [Class['mysql::server'],
                 Class['mysql::bindings::python']],
