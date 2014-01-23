@@ -118,9 +118,15 @@ class pip_packages {
   package { 'pep8':
     provider => 'pip',
   }
-  package { 'closure-linter':
-    source => 'http://closure-linter.googlecode.com/files/closure_linter-latest.tar.gz',
-    provider => 'pip',
+  # this doesn't work as expected; replaced with exec resource below
+  #package { 'closure-linter':
+  #  source => 'http://closure-linter.googlecode.com/files/closure_linter-latest.tar.gz',
+  #  provider => 'pip',
+  #}
+  exec { 'closure-linter':
+     command => '/usr/bin/pip install http://closure-linter.googlecode.com/files/closure_linter-latest.tar.gz && touch /home/vagrant/.installed-closure-linter',
+     creates => '/home/vagrant/.installed-closure-linter',
+     require => Package['python-pip'],
   }
 
   # optional - for kml validation during testing
