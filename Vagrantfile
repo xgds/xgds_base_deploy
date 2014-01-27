@@ -1,6 +1,13 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
+Vagrant.configure("1") do |config|
+  # run "VAGRANT_GUI=1 vagrant up" to get a display; default is headless mode
+  if ENV['VAGRANT_GUI'] != nil
+    config.vm.boot_mode = :gui
+  end
+end
+
 Vagrant.configure("2") do |config|
   # 64-bit Ubuntu VMs fail under VirtualBox 4.2 in Mac OS X 10.6 (hang
   # on startup).  As we upgrade our dev machines, at some point we may
