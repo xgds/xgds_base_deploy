@@ -16,9 +16,9 @@ from os.path import expanduser
 from subprocess import STDOUT, check_call
 
 def installPuppet():
-    check_call(['curl', '-o', '/tmp/puppetlabs-release-jessie.deb',
-                'https://apt.puppetlabs.com/puppetlabs-release-jessie.deb'], stdout=open(os.devnull,'wb'), stderr=STDOUT)
-    check_call(["sudo", "dpkg", "-i", "/tmp/puppetlabs-release-jessie.deb"], stdout=open(os.devnull,'wb'), stderr=STDOUT)
+    check_call(['curl', '-o', '/tmp/puppetlabs-release-trusty.deb',
+                'https://apt.puppetlabs.com/puppetlabs-release-trusty.deb'], stdout=open(os.devnull,'wb'), stderr=STDOUT)
+    check_call(["sudo", "dpkg", "-i", "/tmp/puppetlabs-release-trusty.deb"], stdout=open(os.devnull,'wb'), stderr=STDOUT)
     print "Running apt-get update..."
     check_call(["sudo", "apt-get", "update"], stdout=open(os.devnull,'wb'))
     print "Installing puppet..."
