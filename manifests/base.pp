@@ -257,7 +257,7 @@ class mysql_setup {
 
   # install mysqld server
   class { 'mysql::server':
-    package_name => 'mariadb-server-10.0',
+    package_name => 'mariadb-server',
     root_password => 'vagrant',
     override_options => {
       'mysqld' => {
