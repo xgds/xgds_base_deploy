@@ -1,4 +1,5 @@
 include apt
+include stdlib
 
 # force a one-time 'apt-get update' before installing any packages.
 # otherwise apt-get may hit the wrong servers and error out.
@@ -27,7 +28,7 @@ class ubuntu_packages {
   package { 'npm':}
   package { 'nodejs-legacy':}
   package { 'subversion':}
-  package { 'ckermit':}
+  package { 'gkermit':}
   package { 'couchdb':}
   package { 'libproj-dev': }
   package { 'gdal-bin': }
@@ -257,7 +258,7 @@ class mysql_setup {
   # install mysqld server
   class { 'mysql::server':
     package_name => 'mariadb-server-10.0',
-    root_password => 'f1eldt3st',
+    root_password => 'vagrant',
     override_options => {
       'mysqld' => {
         'plugin-load' => 'ha_tokudb',
