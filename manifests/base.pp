@@ -1,13 +1,53 @@
 include apt
 include stdlib
 
-# force a one-time 'apt-get update' before installing any packages.
-# otherwise apt-get may hit the wrong servers and error out.
-#exec { 'apt_update':
-#  command => "/usr/bin/apt-get update && touch /home/$user/.apt-updated",
-#  creates => "/home/$user/.apt-updated",
-#}
-#Exec['apt_update'] -> Package <| |>
+# $user, $site, $dev_instance set in /etc/facter/facts.d/xgds.json -- see setup_site.py
+
+$deploy = "/home/$user/puppet/xgds_${site}_deploy"
+if $dev_instance {
+  $sitedir = "/home/$user/gds/xgds_${site}"
+}
+else {
+  $sitedir = "/home/$user/xgds_${site}"
+}
+
+class java_repo {
+    exec { 'add-java-repo':
+      command => "sudo apt-add-repository ppa:webupd8team/java",
+      path => "/usr/bin",
+      creates => "/etc/apt/sources.list.d/webupd8team-java-trusty.list"
+    }
+}
+
+class { 'java_repo': }
+Class['java_repo'] -> Class['ubuntu_packages']
+
+#################################################################
+# MARIA DB PACKAGE Source
+
+class mariadb_repo {
+  apt::source { "mariadb":
+    location => "http://ftp.utexas.edu/mariadb/repo/10.0/ubuntu",
+    release => "trusty",
+    repos => "main",
+    include => {
+      'src' => false,
+      'deb' => true,
+    },
+    key => {
+      id => '199369E5404BD5FC7D2FE43BCBCB082A1BB943DB',
+      server => 'hkp://keyserver.ubuntu.com:80',
+    },
+    before => Exec['apt-update']
+  }
+  exec { 'apt-update':
+    command => "/usr/bin/apt-get -y update && /usr/bin/touch /home/$user/.apt_updated",
+    creates => "/home/$user/.apt_updated",
+  }
+}
+
+class { 'mariadb_repo': }
+Class['mariadb_repo'] -> Class['ubuntu_packages']
 
 #################################################################
 # UBUNTU PACKAGES
@@ -32,7 +72,11 @@ class ubuntu_packages {
   package { 'couchdb':}
   package { 'libproj-dev': }
   package { 'gdal-bin': }
-    
+  package { 'memcached': }
+  package { 'libmemcached-dev': }
+#  You can't auto-install Java because the installer seems to insist on manual acceptance of the Oracle Java License
+#  package { 'oracle-java8-installer': }
+
   # optional - for dev
   package { 'emacs': }
 
@@ -50,37 +94,42 @@ class ubuntu_packages {
   # optional - needed for pykml
   package { 'python-lxml': }
 
-  file { 'no_transparent_huge_pages':
-    path => '/etc/default/grub',
-    ensure => file,
-    content => file("/home/$user/puppet/xgds_base_deploy/config-files/grub-defaults"),
-  }
+  # MariaDB uses an engine called TokuDB that requires the GRUB
+  # setting transparent_hugepage=never. We need to put our grub config
+  # file in one of two places, depending on the flavor of Ubuntu we
+  # are using (server ISO vs "cloud image" used by Vagrant). We'll
+  # just write to both locations (sigh).
+  if $database {
+    file { '/etc/default/grub':
+      ensure => file,
+      source => "${deploy}/etc/grub-defaults",
+    }
+    #file { '/etc/default/grub.d/50-cloudimg-settings.cfg':
+    #  ensure => file,
+    #  source => "${deploy}/etc/grub-defaults",
+    #}
 
-  exec { 'grub-setup':
-    command => '/usr/sbin/grub-mkconfig -o /boot/grub/grub.cfg',
+    exec { 'grub-setup':
+      command => '/usr/sbin/grub-mkconfig -o /boot/grub/grub.cfg',
+      require => [
+        File['/etc/default/grub'],
+        # File['/etc/default/grub.d/50-cloudimg-settings.cfg'],
+      ],
+    }
+  }
+  # The config file stuff above makes a persistent change to the
+  # transparent_hugepages setting. This command redundantly does a
+  # one-time fix so we don't have to reboot partway through
+  # provisioning to pick up the config file change.
+  if $database {
+     exec { 'immediate_transparent_hugepages':
+             command => "/bin/echo never > /sys/kernel/mm/transparent_hugepage/enabled && /usr/bin/touch /home/$user/.hugepage_fixed && sudo /usr/sbin/service mysql restart",
+             creates => "/home/$user/.hugepage_fixed"
+     }
   }
 }
 
 class { 'ubuntu_packages': }
-
-#################################################################
-# MARIA DB PACKAGE Source
-
-class mariadb_packages {
-   apt::key {'mariadb':
-      key => '0xcbcb082a1bb943db',
-      key_server => 'hkp://keyserver.ubuntu.com:80',
-   }
-
-   apt::source { "mariadb":
-        location        => "http://ftp.utexas.edu/mariadb/repo/10.0/ubuntu",
-        release         => "trusty",
-        repos           => " main",
-        include_src     => false
-   }
-}
-
-class { 'mariadb_packages': }
 
 #################################################################
 # PIP PACKAGES
@@ -114,9 +163,14 @@ class pip_packages {
   package { 'pytz':
     provider => 'pip',
   }
-  package { 'django-taggit':
+  package { 'python-dateutil':
     provider => 'pip',
-    source => 'git+git://github.com/tamarmot/django-taggit.git#egg=django-taggit',
+  }
+  package { 'django-treebeard':
+    provider => 'pip',
+  }
+  package { 'django-taggit':
+    provider => 'pip'
   }
   package { 'django-filter':
     provider => 'pip',
@@ -126,6 +180,9 @@ class pip_packages {
     provider => 'pip',
   }
   package { 'pyzmq':
+    provider => 'pip',
+  }
+  package { 'pylibmc':
     provider => 'pip',
   }
   # this rule fixes a problem in the pyzmq permissions after install
@@ -180,6 +237,10 @@ class pip_packages {
   package { 'django-bower':
     provider => 'pip',
   }
+  # m3u8 playlist parser for xgds_video
+  package { 'm3u8':
+    provider => 'pip',
+  }
   # this doesn't work as expected; replaced with exec resource below
   #package { 'closure-linter':
   #  source => 'http://closure-linter.googlecode.com/files/closure_linter-latest.tar.gz',
@@ -202,6 +263,14 @@ class pip_packages {
     provider => 'pip',
   }
 
+  # put extra packages to install here.
+
+#  package { 'fpdf':
+#    provider => 'pip',
+#  }
+#  package { 'qrcode':
+#    provider => 'pip',
+#  }
 }
 
 class { 'pip_packages': }
@@ -250,34 +319,38 @@ Class['ubuntu_packages'] -> Class['npm_packages']
 # https://forge.puppetlabs.com/puppetlabs/mysql
 
 class mysql_setup {
-  anchor { 'mysql_setup::begin':
-    before => [Class['mysql::server'],
-               Class['mysql::bindings::python']],
-  }
-
-  # install mysqld server
-  class { 'mysql::server':
-    package_name => 'mariadb-server',
-    root_password => 'vagrant',
-    override_options => {
-      'mysqld' => {
-        'plugin-load' => 'ha_tokudb',
+  if $database {
+    # install mysqld server
+    class { 'mysql::server':
+      package_name => 'mariadb-server-10.0',
+      root_password => 'vagrant',
+      override_options => {
+        'mysqld' => {
+          'plugin-load' => 'ha_tokudb',
+        }
       }
     }
+    contain 'mysql::server'
+  } else {
+    # install mysqld server
+    class { 'mysql::client':
+      package_name => 'mariadb-client-10.0'
+    }
+    contain 'mysql::client'
   }
+
   # install python bindings
   class { 'mysql::bindings':
   	python_enable => true,
   }
-  anchor { 'mysql_setup::end':
-    require => [Class['mysql::server'],
-                Class['mysql::bindings::python'],
-		Class['mariadb_packages']],
-  }
+  contain 'mysql::bindings'
+
   # Install dev packages last so we get right version to match server
   package { 'libmariadbclient-dev': }
 }
+
 class { 'mysql_setup': }
+Class['mariadb_repo'] -> Class['mysql_setup']
 
 #################################################################
 # APACHE SETUP
@@ -300,4 +373,148 @@ class apache_setup {
                 Class['apache::mod::wsgi']],
   }
 }
+
 class { 'apache_setup': }
+Class['ubuntu_packages'] -> Class['apache_setup']
+
+######################################################################
+# SITE SETUP
+
+if $dev_instance {
+  $apacheConfSource = "${deploy}/etc/xgds_${site}_dev.conf"
+}
+else {
+  $apacheConfSource = "${deploy}/etc/xgds_${site}_prod.conf"
+}
+
+class site_setup {
+  # make symlinks to the apache site config in the standard locations so
+  # apache uses it.
+  file { 'apache2_conf_available':
+    path => "/etc/apache2/sites-available/xgds_${site}.conf",
+    ensure => file,
+    content => file($apacheConfSource),
+  }
+  file { 'apache2_conf_enabled':
+    path => "/etc/apache2/sites-enabled/xgds_${site}.conf",
+    ensure => link,
+    target => "../sites-available/xgds_${site}.conf",
+    require => File['apache2_conf_available'],
+  }
+  # pyraptord boot script
+#  file { 'pyraptord_conf':
+#    path => '/etc/init/pyraptord.conf',
+#    source => "${sitedir}/management/bootscripts/pyraptord.conf",
+#  }
+
+  # run 'manage.py bootstrap' to generate sourceme.sh and settings.py
+  exec { 'bootstrap':
+    command => "${sitedir}/management/bootstrap.py --puppet --yes genSourceme genSettings",
+    onlyif => '/usr/bin/test ! -f ${sitedir}/settings.py',
+    creates => "${sitedir}/settings.py",
+    user => $user,
+  }
+  
+  # append vagrant-specific settings to base settings.py
+  exec { 'extraSettings':
+    command => "/bin/cat ${deploy}/etc/extraSettings.py >> ${sitedir}/settings.py && touch ${sitedir}/build/management/extraSettings.txt",
+    creates => "${sitedir}/build/management/extraSettings.txt",
+    require => Exec['bootstrap'],
+  }
+
+  class dbcreate {
+    mysql::db { "xgds_${site}":
+      ensure => present,
+      user => $user,
+      password => 'vagrant',
+      charset => 'utf8',
+      collate => 'utf8_general_ci',
+    }
+  }
+  if $database {
+    class { 'dbcreate': }
+    contain 'dbcreate'
+  }
+
+#  exec { 'dbfetch':
+#    command => "/usr/bin/curl -o /home/$user/puppet/xgds_${site}_dump.sql.gz http://xgds.org/vagrant/xgds_${site}_dump.sql.gz",
+#    creates => "/home/$user/puppet/xgds_${site}_dump.sql.gz",
+#    user => $user,
+#  }
+
+#  exec { 'dbrestore':
+#    command => "/bin/gunzip -c /home/$user/puppet/xgds_${site}_dump.sql.gz | ${sitedir}/manage.py dbshell",
+#    creates => "/var/lib/mysql/xgds_${site}/auth_user.frm",
+#    require => [Class['dbcreate'], Exec['extraSettings'], Exec['dbfetch']],
+#    user => $user,
+#  }
+
+#  exec { 'datafetch':
+#    command => "/usr/bin/curl -o /home/$user/puppet/xgds_${site}_data_dir.tgz http://xgds.org/vagrant/xgds_${site}_data_dir.tgz",
+#    creates => "/home/$user/puppet/xgds_${site}_data_dir.tgz",
+#    user => $user,
+#  }
+
+#  exec { 'data_dir_unpack':
+#    command => "/bin/tar xfz /home/$user/puppet/xgds_${site}_data_dir.tgz && chmod -R a+rX xgds_${site}_data && chmod -R g+w xgds_${site}_data && find xgds_${site}_data -type d | xargs chmod g+s && sudo chown -R www-data:www-data xgds_${site}_data && mv xgds_${site}_data xgds_${site}/data",
+#    cwd => "/home/$user/gds/",
+#    creates => "${sitedir}/data",
+#    require => Exec['datafetch'],
+#  }
+
+  user { $user:
+    ensure => present,
+    # uid => 1001,
+    # gid => 1001,
+    groups => ['www-data'],
+  }
+
+  exec { 'prep':
+    # can't run this with root environment variables, because bower
+    # crashes if it looks for files in root's home directory. setting the puppet
+    # 'user' flag as shown below isn't sufficient. 'su' seems to be needed.
+    command => "/bin/su -l $user -c '(cd gds/xgds_basalt && ./manage.py prep)'",
+    require => Exec['bootstrap'],
+  }
+
+  # symlink shortcut for dev environment only
+  if $dev_instance {
+    file { "/home/$user/xgds_${site}":
+      ensure => link,
+      target => "gds/xgds_${site}",
+    }
+  }
+
+  # handy setup for dev work
+  exec { 'bashrc_extras':
+    command => "/bin/cat ${deploy}/etc/bashrc_extras.sh >> /home/$user/.bashrc && touch /home/$user/.installed_bashrc_extras",
+    creates => "/home/$user/.installed_bashrc_extras",
+  }
+  file { "/home/$user/.screenrc":
+    source => "${deploy}/etc/screenrc",
+  }
+  file { "/home/$user/.emacs":
+    source => "${deploy}/etc/emacs",
+  }
+  file { "/usr/local/bin/pcache":
+    source => "${deploy}/etc/pcache",
+  }
+  exec { "ensure_gitconfig":
+    # if etc/gitconfig is not present, create as an empty file to avoid error.
+    command => "/usr/bin/touch ${deploy}/etc/gitconfig",
+    creates => "${deploy}/etc/gitconfig",
+  }
+  file { "/home/$user/.gitconfig":
+    source => "${deploy}/etc/gitconfig",
+    require => Exec['ensure_gitconfig'],
+  }
+}
+
+class { 'site_setup':
+  require => [Class['pip_packages'],
+              Class['mysql_setup'],
+              Class['apache_setup'],
+	     ],
+  notify => Service['apache2'],
+}
+Class['apache_setup'] -> Class['site_setup']
