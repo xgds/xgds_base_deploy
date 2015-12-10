@@ -2,3 +2,4 @@
 #*#
 /.vagrant*
 xgds_base.box
+/docs/_build/
